@@ -146,18 +146,25 @@ def fetch_categories(driver, base_url):
     except Exception as e:
         logging.error(f"Error extracting categories: {e}")
         return []
-        
+
 def get_all_products_from_category(driver, url):
     """Gets all products from a category including pagination."""
     try:
         driver.get(url)
         time.sleep(PAGE_LOAD_DELAY)  # Wait for initial page load
         
+        # Get total number of pages at the start
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        max_pages = get_last_page_number(str(soup))
+        logging.info(f"Total pages to process: {max_pages}")
+        
         all_products = []
         current_page = 1
         has_next_page = True
 
-        while has_next_page:
+        while has_next_page and current_page <= max_pages:
+            logging.info(f"Processing page {current_page} of {max_pages}")
+            
             try:
                 # Wait for products to load
                 WebDriverWait(driver, 20).until(
@@ -175,12 +182,16 @@ def get_all_products_from_category(driver, url):
                 logging.warning(f"No products found on page {current_page}")
                 break
 
-            logging.info(f"Processing page {current_page}")
             for entry in product_entries:
                 product = extract_product_data(entry)
                 if product:
                     all_products.append(product)
                     time.sleep(PRODUCT_LOG_DELAY)
+
+            # Don't try to go to next page if we're on the last page
+            if current_page >= max_pages:
+                logging.info("Reached maximum page number")
+                break
 
             try:
                 # Check if next page exists
@@ -216,11 +227,16 @@ def get_all_products_from_category(driver, url):
                 logging.error(f"Error during pagination: {str(e)}")
                 break
 
-        logging.info(f"Completed category with {len(all_products)} products across {current_page} pages")
+        logging.info(f"Completed category with {len(all_products)} products across {current_page} of {max_pages} total pages")
         return all_products
     except Exception as e:
         logging.error(f"Error getting products from category: {e}")
         return []
+
+def get_last_page_number(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    page_numbers = [int(a.text.strip()) for a in soup.find_all('a') if a.text.strip().isdigit()]
+    return max(page_numbers) if page_numbers else 0
 
 def main():
     driver = get_driver()

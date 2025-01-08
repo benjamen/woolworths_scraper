@@ -346,26 +346,36 @@ def main():
         product_log_delay=float(os.environ.get("PRODUCT_LOG_DELAY", 0.02))
     )
 
-    with WoolworthsScraper(config) as scraper:
-        categories = scraper.fetch_categories()
-        if not categories:
-            logging.error("No categories found to process")
-            return
+    filename = f"woolworths_products_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
+    
+    with open(filename, 'w') as outfile:
+        logging.info(f"Opened file {filename} for writing.")
+        with WoolworthsScraper(config) as scraper:
+            categories = scraper.fetch_categories()
+            if not categories:
+                logging.error("No categories found to process")
+                return
 
-        all_products = []
-        for category in categories:
-            logging.info(f"Fetching products from category: {category['name']}")
-            products = scraper.scrape_products(category["url"])
-            if products:
-                logging.info(f"Found {len(products)} products in category {category['name']}")
-                all_products.extend(products)
-            time.sleep(config.page_load_delay)
+            all_products = []
+            for category in categories:
+                logging.info(f"Fetching products from category: {category['name']}")
+                products = scraper.scrape_products(category["url"])
+                logging.debug(f"Products fetched: {products}")  # Log the fetched products
+                if products:
+                    logging.info(f"Found {len(products)} products in category {category['name']}")
+                    for product in products:
+                        try:
+                            json.dump(product, outfile)
+                            outfile.write('\n')  # Write a newline for each product
+                            all_products.append(product)
+                            logging.info(f"Written product to file: {product['name']}")
+                        except Exception as e:
+                            logging.error(f"Error writing product to file: {e}")
+                else:
+                    logging.warning(f"No products found in category: {category['name']}")
+                time.sleep(config.page_load_delay)
 
-        if all_products:
-            filename = f"woolworths_products_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
-            with open(filename, 'w') as outfile:
-                json.dump(all_products, outfile, indent=4)
-            logging.info(f"Successfully wrote {len(all_products)} products to {filename}")
+    logging.info(f"Successfully wrote {len(all_products)} products to {filename}")
 
 if __name__ == "__main__":
     main()

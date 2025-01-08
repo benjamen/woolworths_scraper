@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import json
 import requests
 
+from frappe_write import test_write_to_frappe
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -188,46 +189,36 @@ class WoolworthsScraper(BaseScraper):
         time.sleep(5)  # Wait for the page to load completely
         return BeautifulSoup(self.driver.page_source, "html.parser")
 
-    def extract_breadcrumbs(self, soup: BeautifulSoup) -> Dict[str, str]:
-        breadcrumbs = {}
+    def extract_breadcrumbs(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
+        product_categories = []
         try:
-            # Print the HTML content for debugging
             logging.debug(f"HTML content: {soup.prettify()}")
             
-            # Find the breadcrumb container
             breadcrumb_container = soup.find('cdx-breadcrumb')
             if not breadcrumb_container:
                 logging.warning("Breadcrumb container not found")
-                logging.debug(f"Full HTML: {soup.prettify()}")  # Debugging line
-                return breadcrumbs
+                return product_categories
 
-            # Find all li elements within the breadcrumb
             breadcrumb_items = breadcrumb_container.find_all('li')
             
-            for i, item in enumerate(breadcrumb_items, 1):
-                # Handle home link
-                home_link = item.find('a', attrs={'aria-label': 'Home'})
-                if home_link:
-                    breadcrumbs[f"breadcrumb_{i}"] = "Home"
-                    continue
-                
-                # Handle regular links
-                link = item.find('a', class_='ng-star-inserted')
+            for item in breadcrumb_items:
+                # Check for anchor tags first
+                link = item.find('a')
                 if link and link.text.strip():
-                    breadcrumbs[f"breadcrumb_{i}"] = link.text.strip()
-                    continue
-                
-                # Handle span (usually the last item)
-                span = item.find('span', class_='ng-star-inserted')
-                if span and span.text.strip():
-                    breadcrumbs[f"breadcrumb_{i}"] = span.text.strip()
+                    product_categories.append({"category_name": link.text.strip()})
+                # If no anchor tag, check for span (last item)
+                else:
+                    span = item.find('span')
+                    if span and span.text.strip():
+                        product_categories.append({"category_name": span.text.strip()})
 
-            logging.info(f"Extracted breadcrumbs: {breadcrumbs}")
-            return breadcrumbs
+            # Log the extracted categories
+            logging.info(f"Extracted product categories: {product_categories}")
+            return product_categories
             
         except Exception as e:
             logging.error(f"Error extracting breadcrumbs: {str(e)}")
-            return breadcrumbs
+            return product_categories
 
     def extract_product_data(self, entry: BeautifulSoup, **kwargs) -> Optional[Dict]:
         try:
@@ -272,8 +263,9 @@ class WoolworthsScraper(BaseScraper):
                     logging.info(f"Fetching product page: {full_product_url}")
                     product_page = self.fetch_product_page(full_product_url)
                     breadcrumb_info = self.extract_breadcrumbs(product_page)
+                    
                     if breadcrumb_info:
-                        product.update(breadcrumb_info)
+                        product['product_categories'] = [category['category_name'] for category in breadcrumb_info]  # Store as a list
                         logging.info(f"Successfully added breadcrumbs for {product['name']}")
                     else:
                         logging.warning(f"No breadcrumbs found for product: {product['name']}")
@@ -351,12 +343,12 @@ def main():
     with open(filename, 'w') as outfile:
         logging.info(f"Opened file {filename} for writing.")
         with WoolworthsScraper(config) as scraper:
+            # Fetch categories
             categories = scraper.fetch_categories()
             if not categories:
                 logging.error("No categories found to process")
                 return
 
-            all_products = []
             for category in categories:
                 logging.info(f"Fetching products from category: {category['name']}")
                 products = scraper.scrape_products(category["url"])
@@ -365,17 +357,22 @@ def main():
                     logging.info(f"Found {len(products)} products in category {category['name']}")
                     for product in products:
                         try:
+                            # Write product to file
                             json.dump(product, outfile)
                             outfile.write('\n')  # Write a newline for each product
-                            all_products.append(product)
                             logging.info(f"Written product to file: {product['name']}")
+                            
+                            # Send each product to Frappe immediately after scraping
+                            test_write_to_frappe(product)
+                            logging.info(f"Successfully sent product to Frappe: {product['name']}")
                         except Exception as e:
-                            logging.error(f"Error writing product to file: {e}")
+                            logging.error(f"Error processing product {product['name']}: {e}")
                 else:
                     logging.warning(f"No products found in category: {category['name']}")
                 time.sleep(config.page_load_delay)
 
-    logging.info(f"Successfully wrote {len(all_products)} products to {filename}")
+    logging.info(f"Successfully wrote products to {filename} and sent them to Frappe.")
 
 if __name__ == "__main__":
     main()
+
